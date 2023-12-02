@@ -1,9 +1,8 @@
-use core::num;
 use std::collections::HashMap;
 
 use chumsky::prelude::*;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum Color {
     R,
     G,
@@ -12,7 +11,7 @@ enum Color {
 
 type Cubes = HashMap<Color, u32>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Game {
     id: u32,
     cubes: Vec<Cubes>,
@@ -72,6 +71,20 @@ fn game_possible(cubes: &Cubes, game: &Game) -> bool {
         .all(|observation| observation_possible(cubes, &observation))
 }
 
+fn game_min_cubes(game: &Game) -> Cubes {
+    let mut min_cubes: Cubes = HashMap::new();
+
+    for cubes in (&game.cubes) {
+        for (color, v1) in cubes.into_iter() {
+            min_cubes
+                .entry(*color)
+                .and_modify(|v2| *v2 = std::cmp::max(*v1, *v2))
+                .or_insert(*v1);
+        }
+    }
+    min_cubes
+}
+
 fn main() {
     let src = std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap();
     let games = parser().parse(src).unwrap();
@@ -80,6 +93,7 @@ fn main() {
     println!(
         "Question 1 answer is: {}",
         games
+            .clone()
             .into_iter()
             .map(|g| if game_possible(&q1_cubes, &g) {
                 g.id
@@ -88,4 +102,12 @@ fn main() {
             })
             .sum::<u32>()
     );
+    println!(
+        "Question 2 answer is: {}",
+        games
+            .clone()
+            .into_iter()
+            .map(|g| { game_min_cubes(&g).values().product::<u32>() })
+            .sum::<u32>()
+    )
 }
