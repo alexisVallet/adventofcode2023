@@ -60,7 +60,7 @@ fn main() {
         all_pair_distance(&expand_image(&image, 1)).sum::<Scalar>()
     );
     println!(
-        "Question 1 answer is: {}",
+        "Question 2 answer is: {}",
         all_pair_distance(&expand_image(&image, 999999)).sum::<Scalar>()
     );
 }
