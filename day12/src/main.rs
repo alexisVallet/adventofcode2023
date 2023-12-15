@@ -276,13 +276,7 @@ fn main() {
         "Question 2 answer is: {}",
         expanded
             .into_iter()
-            .enumerate()
-            .map(|(i, r)| {
-                println!("Computing line {}...", i + 1);
-                let n = num_arrangements_fast(&r, 0, None, 0, &cache);
-                println!("Finished line {}!", i + 1);
-                n
-            })
+            .map(|r| num_arrangements_fast(&r, 0, None, 0, &cache))
             .sum::<u64>()
     )
 }
