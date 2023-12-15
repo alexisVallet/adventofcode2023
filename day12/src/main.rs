@@ -1,8 +1,8 @@
 use bitfield::BitRange;
-use bitfield::Bit;
 use chumsky::prelude::*;
 use itertools::{Either, Itertools};
-use rayon::prelude::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 
 // Represent an arrangement as a bit field
@@ -110,8 +110,11 @@ fn expand(bitfield: Scalar, size: usize) -> Scalar {
     out
 }
 
-
-fn num_arrangements_all_unk(record: &SpringRecord, cur_group_id: usize, prev_group_loc: Option<usize>) -> u64{
+fn num_arrangements_all_unk(
+    record: &SpringRecord,
+    cur_group_id: usize,
+    prev_group_loc: Option<usize>,
+) -> u64 {
     // If all remains is ??? we don't need to make any checks or build the actual solution.
     if cur_group_id >= record.sizes.len() {
         1
@@ -123,19 +126,19 @@ fn num_arrangements_all_unk(record: &SpringRecord, cur_group_id: usize, prev_gro
         let end_loc = record.total_size
             - (group_sizes_after.iter().sum::<usize>() + (group_sizes_after.iter().count() - 1))
             + 1;
-        let process_loc = |cur_group_loc: usize| -> u64{
+        let process_loc = |cur_group_loc: usize| -> u64 {
             num_arrangements_all_unk(record, cur_group_id + 1, Some(cur_group_loc))
         };
         (start_loc..end_loc).into_iter().map(process_loc).sum()
     }
 }
 
-
 fn num_arrangements_fast(
     record: &SpringRecord,
     cur_group_id: usize,
     prev_group_loc: Option<usize>,
     cur_solution: Scalar,
+    cache: &RefCell<HashMap<(Scalar, Scalar, usize, Vec<usize>), u64>>,
 ) -> u64 {
     // Start by checking if the solution up to now is compatible with known
     // damaged/operational. Prune if that's not the case.
@@ -155,9 +158,13 @@ fn num_arrangements_fast(
 
     // Check whether we don't have any constraint ahead, if so switch to the
     // faster, unknown only solution.
-    let remaining_dmg: Scalar = record.damaged.bit_range(Scalar::BITS as usize - 1, start_loc);
-    let remaining_op: Scalar = record.operational.bit_range(Scalar::BITS as usize - 1, start_loc);
-    
+    let remaining_dmg: Scalar = record
+        .damaged
+        .bit_range(Scalar::BITS as usize - 1, start_loc);
+    let remaining_op: Scalar = record
+        .operational
+        .bit_range(Scalar::BITS as usize - 1, start_loc);
+
     if slice_sol & slice_dmg != slice_dmg || !slice_sol & slice_op != slice_op {
         0
     } else if cur_group_id >= record.sizes.len() {
@@ -169,70 +176,74 @@ fn num_arrangements_fast(
         } else {
             0
         }
-    } else if remaining_dmg == 0 && remaining_op == 0 {
-        num_arrangements_all_unk(record, cur_group_id, prev_group_loc)
     } else {
-        let group_sizes_after = &record.sizes[cur_group_id..];
-        let end_loc = record.total_size
-            - (group_sizes_after.iter().sum::<usize>() + (group_sizes_after.iter().count() - 1))
-            + 1;
-        let process_loc = |cur_group_loc: usize| -> u64{
-            let group_mask = (0_u32..record.sizes[cur_group_id] as u32)
-                .map(|i| 2_u128.pow(i))
-                .fold(0, |i1, i2| i1 | i2)
-                << cur_group_loc;
-            let new_solution = cur_solution | group_mask;
-            num_arrangements_fast(record, cur_group_id + 1, Some(cur_group_loc), new_solution)
-        };
-        (start_loc..end_loc).into_iter().map(process_loc).sum()
+        let cache_key = (
+            remaining_dmg,
+            remaining_op,
+            record.total_size - start_loc,
+            record.sizes[cur_group_id..]
+                .into_iter()
+                .map(|t| *t)
+                .collect(),
+        );
+        let cache_val;
+        {
+            cache_val = cache.borrow().get(&cache_key).map(|t| *t);
+        }
+        match cache_val {
+            None => {
+                let out = if remaining_dmg == 0 && remaining_op == 0 {
+                    num_arrangements_all_unk(record, cur_group_id, prev_group_loc)
+                } else {
+                    let group_sizes_after = &record.sizes[cur_group_id..];
+                    let end_loc = record.total_size
+                        - (group_sizes_after.iter().sum::<usize>()
+                            + (group_sizes_after.iter().count() - 1))
+                        + 1;
+                    let process_loc = |cur_group_loc: usize| -> u64 {
+                        let group_mask = (0_u32..record.sizes[cur_group_id] as u32)
+                            .map(|i| 2_u128.pow(i))
+                            .fold(0, |i1, i2| i1 | i2)
+                            << cur_group_loc;
+                        let new_solution = cur_solution | group_mask;
+                        num_arrangements_fast(
+                            record,
+                            cur_group_id + 1,
+                            Some(cur_group_loc),
+                            new_solution,
+                            cache,
+                        )
+                    };
+                    (start_loc..end_loc).into_iter().map(process_loc).sum()
+                };
+                {
+                    let mut cache = cache.borrow_mut();
+                    cache.insert(cache_key, out);
+                }
+                out
+            }
+            Some(out) => out,
+        }
     }
 }
-
-
-fn flip_record(record: &SpringRecord) -> SpringRecord {
-    // Flip it around the side of the longest unknown suffix to speed up search.
-    let dmg_bits: Vec<bool> = (0..record.total_size).into_iter().map(|i|
-        record.damaged.bit(i)
-    ).collect();
-    let op_bits: Vec<bool> = (0..record.total_size).into_iter().map(|i|
-        record.operational.bit(i)
-    ).collect();
-    let mut prefix_size = 0;
-    
-    for i in 0..record.total_size {
-        if dmg_bits[i] {
-            break;
-        }
-        prefix_size += 1;
-    }
-    let mut suffix_size = 0;
-
-    for i in 0..record.total_size {
-        if dmg_bits[record.total_size - 1 - i] {
-            break;
-        }
-        suffix_size +=1;
-    }
-
-    if prefix_size > suffix_size {
-        SpringRecord
-    } else {
-        record.clone()
-    }
-}
-
 
 fn main() {
     let src = std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap();
     let records = parse_spring_records().parse(src.clone()).unwrap();
-    let output_fast = records.iter().map(|r| num_arrangements_fast(r, 0, None, 0));
+    let cache = RefCell::new(HashMap::new());
+    let output_fast = records
+        .iter()
+        .map(|r| num_arrangements_fast(r, 0, None, 0, &cache));
     let output_slow = records.iter().map(|r| arrangements(r).count() as u64);
 
     for (i, (o_fast, o_slow)) in output_fast.zip(output_slow).enumerate() {
         if o_fast != o_slow {
             println!(
                 "Different output at line {}: o_fast={}, o_slow={}, record={:?}",
-                i + 1, o_fast, o_slow, records[i]
+                i + 1,
+                o_fast,
+                o_slow,
+                records[i]
             );
         }
     }
@@ -240,8 +251,8 @@ fn main() {
     println!(
         "Question 1 answer is: {}",
         records
-            .par_iter()
-            .map(|r| num_arrangements_fast(r, 0, None, 0))
+            .iter()
+            .map(|r| num_arrangements_fast(r, 0, None, 0, &cache))
             .sum::<u64>()
     );
 
@@ -264,12 +275,12 @@ fn main() {
     println!(
         "Question 2 answer is: {}",
         expanded
-            .par_iter()
+            .into_iter()
             .enumerate()
             .map(|(i, r)| {
-                println!("Computing line {}...", i+1);
-                let n = num_arrangements_fast(r, 0, None, 0);
-                println!("Finished line {}!", i+1);
+                println!("Computing line {}...", i + 1);
+                let n = num_arrangements_fast(&r, 0, None, 0, &cache);
+                println!("Finished line {}!", i + 1);
                 n
             })
             .sum::<u64>()
