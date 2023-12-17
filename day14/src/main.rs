@@ -206,10 +206,8 @@ fn main() {
     while i < num_iter {
         let (_, dir) = dir_iter.next().unwrap();
         tilt(&mut platform_q2, dir);
-        println!("{i}: {}", total_load_north(&platform_q2));
         i += 1;
     }
 
     println!("Question 2 answer is: {}", total_load_north(&platform_q2));
-    visualize(&platform_q2);
 }
