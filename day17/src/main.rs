@@ -27,7 +27,8 @@ type Rotation = Scalar;
 // Directed graph where each node represent a state as:
 // - A location in the lava grid
 // - Current direction of the crucible
-// - How many steps the crucible can move forward still
+// - How many consecutive steps the crucible has been taking in the
+//   same direction
 // Edges between nodes correspond to the heat loss to go from
 // a state to another, if it's possible at all.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -123,7 +124,8 @@ fn build_state_graph(map: &Map, min_dir_steps: usize, max_dir_steps: usize) -> S
     }
 
     // The initial state is special. We choose the initial direction, so
-    // we always have forward_steps=2 on the next step, and there is no initial direction.
+    // we always have consecutive_steps=0 on the next step, and there is no
+    // initial direction.
     let init_state = State {
         pos: [0, 0],
         dir: NORTH, // not used
